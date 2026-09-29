@@ -833,12 +833,16 @@
 
   audio.addEventListener('ended', () => {
     loadTrack(currentTrack + 1);
-    audio.play().then(() => setPlayingUI(true)).catch(()=>{});
+    tryPlay();
   });
 
   // ajuda a diagnosticar caso o arquivo de áudio não seja encontrado (nome/caminho errado)
   audio.addEventListener('error', () => {
     console.error('Erro ao carregar a faixa de áudio:', audio.src, audio.error);
+    // mostra o erro na tela para facilitar o diagnóstico
+    const code = audio.error ? audio.error.code : '?';
+    const nome = decodeURIComponent(audio.src.split('/').pop());
+    marquee.textContent = 'ERRO ' + code + ' ao carregar: ' + nome + ' (4 = arquivo não encontrado ou formato inválido)';
   });
 
   audio.muted = true; // garante estado mudo desde o início, antes de qualquer tentativa de autoplay
@@ -847,54 +851,55 @@
   const ICON_PLAY = '<path d="M8 5v14l11-7z"/>';
   const ICON_PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
 
-  let isPlaying = false;
   let userInteracted = false;
-  let unmuteTimer = null;
 
+  // a interface sempre reflete o estado REAL do elemento <audio>
   function setPlayingUI(on){
-    isPlaying = on;
     playIcon.innerHTML = on ? ICON_PAUSE : ICON_PLAY;
   }
+  audio.addEventListener('play',    () => setPlayingUI(true));
+  audio.addEventListener('playing', () => setPlayingUI(true));
+  audio.addEventListener('pause',   () => { if(!audio.ended) setPlayingUI(false); });
 
-  // libera o som (só funciona de verdade depois de um gesto do usuário)
-  function unlock(){
-    userInteracted = true;
-    audio.muted = false;
-  }
-
-  function startPlaying(){
-    if(isPlaying) return;
-    audio.muted = !userInteracted; // sem interação, só dá para tocar mudo
+  function tryPlay(){
     const p = audio.play();
     if(p !== undefined){
-      p.then(() => {
-        setPlayingUI(true);
-        clearTimeout(unmuteTimer);
-        unmuteTimer = setTimeout(() => {
-          if(userInteracted) audio.muted = false;
-        }, 3000);
-      }).catch((err) => {
-        console.warn('Autoplay bloqueado, aguardando interação:', err);
+      p.catch((err) => {
+        console.warn('Não foi possível tocar:', err);
         setPlayingUI(false);
       });
     }
   }
 
-  startPlaying();
-  audio.addEventListener('canplay', () => { if(!isPlaying) startPlaying(); });
-  window.addEventListener('load', () => { if(!isPlaying) startPlaying(); });
-  document.addEventListener('visibilitychange', () => {
-    if(!document.hidden && !isPlaying) startPlaying();
-  });
+  // libera o som (só vale depois de um gesto do usuário)
+  function unlock(){
+    userInteracted = true;
+    audio.muted = false;
+  }
 
-  // primeiro clique/toque em qualquer lugar: libera o som e toca
-  function firstInteraction(){
+  // chamado dentro de um clique/toque: garante que a faixa atual carregue e toque
+  function gesturePlay(){
     unlock();
     if(audio.paused){
-      audio.play().then(() => setPlayingUI(true)).catch(()=>{});
-    } else {
-      setPlayingUI(true);
+      if(audio.error || audio.readyState === 0) audio.load();
+      tryPlay();
     }
+  }
+
+  // tentativa de autoplay (mudo). Só roda enquanto o usuário ainda não interagiu.
+  function startPlaying(){
+    if(userInteracted || !audio.paused) return;
+    audio.muted = true;
+    tryPlay();
+  }
+  startPlaying();
+  audio.addEventListener('canplay', startPlaying);
+  window.addEventListener('load', startPlaying);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) startPlaying(); });
+
+  // primeiro clique/toque em qualquer lugar da página
+  function firstInteraction(){
+    gesturePlay();
     document.removeEventListener('click', firstInteraction);
     document.removeEventListener('touchstart', firstInteraction);
   }
@@ -903,14 +908,13 @@
 
   playBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    // tocando mas mudo (autoplay): o clique apenas liga o som
-    if(isPlaying && audio.muted){ unlock(); return; }
-    if(isPlaying){
-      audio.pause();
-      setPlayingUI(false);
+    if(audio.paused){
+      gesturePlay();          // parado (ou autoplay bloqueado): carrega e toca com som
+    } else if(audio.muted){
+      unlock();               // tocando mudo pelo autoplay: só liga o som
     } else {
-      unlock();
-      audio.play().then(() => setPlayingUI(true)).catch((err)=>console.error(err));
+      userInteracted = true;  // tocando com som: pausa
+      audio.pause();
     }
   });
 
@@ -918,14 +922,14 @@
     e.stopPropagation();
     unlock();
     loadTrack(currentTrack - 1);
-    audio.play().then(() => setPlayingUI(true)).catch(()=>{});
+    tryPlay();
   });
 
   nextBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     unlock();
     loadTrack(currentTrack + 1);
-    audio.play().then(() => setPlayingUI(true)).catch(()=>{});
+    tryPlay();
   });
 
   volBtn.addEventListener('click', (e) => {
