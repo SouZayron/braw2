@@ -833,7 +833,7 @@
 
   audio.addEventListener('ended', () => {
     loadTrack(currentTrack + 1);
-    if(isPlaying){ audio.play().catch(()=>{}); }
+    audio.play().then(() => setPlayingUI(true)).catch(()=>{});
   });
 
   // ajuda a diagnosticar caso o arquivo de áudio não seja encontrado (nome/caminho errado)
@@ -848,53 +848,52 @@
   const ICON_PAUSE = '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>';
 
   let isPlaying = false;
+  let userInteracted = false;
   let unmuteTimer = null;
 
+  function setPlayingUI(on){
+    isPlaying = on;
+    playIcon.innerHTML = on ? ICON_PAUSE : ICON_PLAY;
+  }
+
+  // libera o som (só funciona de verdade depois de um gesto do usuário)
+  function unlock(){
+    userInteracted = true;
+    audio.muted = false;
+  }
+
   function startPlaying(){
-    if(isPlaying) return; // já está tocando, evita tentativas duplicadas
-    // começa mudo (autoplay é liberado pelos navegadores quando muted)
-    audio.muted = true;
-    const playPromise = audio.play();
-    if(playPromise !== undefined){
-      playPromise.then(() => {
-        isPlaying = true;
-        playIcon.innerHTML = ICON_PAUSE;
-        // desmuta após 3 segundos
+    if(isPlaying) return;
+    audio.muted = !userInteracted; // sem interação, só dá para tocar mudo
+    const p = audio.play();
+    if(p !== undefined){
+      p.then(() => {
+        setPlayingUI(true);
         clearTimeout(unmuteTimer);
         unmuteTimer = setTimeout(() => {
-          audio.muted = false;
+          if(userInteracted) audio.muted = false;
         }, 3000);
       }).catch((err) => {
-        // autoplay bloqueado — vai tentar de novo em outros gatilhos (load, canplay, interação)
-        console.warn('Autoplay ainda bloqueado, tentando novamente:', err);
-        isPlaying = false;
-        playIcon.innerHTML = ICON_PLAY;
+        console.warn('Autoplay bloqueado, aguardando interação:', err);
+        setPlayingUI(false);
       });
     }
   }
 
-  // tenta assim que o script roda
   startPlaying();
-
-  // tenta de novo quando a faixa estiver pronta para tocar
   audio.addEventListener('canplay', () => { if(!isPlaying) startPlaying(); });
-
-  // tenta de novo quando a página (imagens, fontes, etc.) terminar de carregar totalmente
   window.addEventListener('load', () => { if(!isPlaying) startPlaying(); });
-
-  // tenta de novo se a aba ficar visível (ex: usuário trocou de aba e voltou)
   document.addEventListener('visibilitychange', () => {
     if(!document.hidden && !isPlaying) startPlaying();
   });
 
-  // último recurso: qualquer clique/toque na página força o play com som
+  // primeiro clique/toque em qualquer lugar: libera o som e toca
   function firstInteraction(){
-    if(!isPlaying){
-      audio.muted = false;
-      audio.play().then(() => {
-        isPlaying = true;
-        playIcon.innerHTML = ICON_PAUSE;
-      }).catch(()=>{});
+    unlock();
+    if(audio.paused){
+      audio.play().then(() => setPlayingUI(true)).catch(()=>{});
+    } else {
+      setPlayingUI(true);
     }
     document.removeEventListener('click', firstInteraction);
     document.removeEventListener('touchstart', firstInteraction);
@@ -904,33 +903,29 @@
 
   playBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    // tocando mas mudo (autoplay): o clique apenas liga o som
+    if(isPlaying && audio.muted){ unlock(); return; }
     if(isPlaying){
       audio.pause();
-      playIcon.innerHTML = ICON_PLAY;
-      isPlaying = false;
+      setPlayingUI(false);
     } else {
-      audio.play().catch(()=>{});
-      playIcon.innerHTML = ICON_PAUSE;
-      isPlaying = true;
+      unlock();
+      audio.play().then(() => setPlayingUI(true)).catch((err)=>console.error(err));
     }
   });
 
   prevBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    unlock();
     loadTrack(currentTrack - 1);
-    if(isPlaying){
-      audio.play().catch(()=>{});
-      playIcon.innerHTML = ICON_PAUSE;
-    }
+    audio.play().then(() => setPlayingUI(true)).catch(()=>{});
   });
 
   nextBtn.addEventListener('click', (e) => {
     e.stopPropagation();
+    unlock();
     loadTrack(currentTrack + 1);
-    if(isPlaying){
-      audio.play().catch(()=>{});
-      playIcon.innerHTML = ICON_PAUSE;
-    }
+    audio.play().then(() => setPlayingUI(true)).catch(()=>{});
   });
 
   volBtn.addEventListener('click', (e) => {
@@ -945,6 +940,7 @@
 
   volSlider.addEventListener('input', () => {
     const v = volSlider.value;
+    unlock();
     audio.volume = v / 100;
     volVal.textContent = v + '%';
   });
